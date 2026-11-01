@@ -1,0 +1,125 @@
+package whatsapp
+
+import (
+	"bytes"
+	"context"
+	"crypto/tls"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"time"
+
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chatstorage"
+	pkgError "github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/error"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
+	"github.com/sirupsen/logrus"
+)
+
+func submitWebhook(ctx context.Context, payload map[string]any, url string, webhookConfig *chatstorage.DeviceWebhookConfig) error {
+	// Device TLS is resolved separately from the signing secret. A nil device
+	// config keeps the global bypass; an explicit device flag, including false,
+	// replaces it. Secret selection is unchanged.
+	webhookSecret := config.WhatsappWebhookSecret
+
+	if webhookConfig != nil {
+		if webhookConfig.WebhookSecret != "" {
+			webhookSecret = webhookConfig.WebhookSecret
+		}
+	}
+
+	client := newWebhookHTTPClient(webhookConfig)
+	defer client.CloseIdleConnections()
+
+	postBody, err := json.Marshal(payload)
+	if err != nil {
+		return pkgError.WebhookError(fmt.Sprintf("Failed to marshal body: %v", err))
+	}
+
+	// Pass the body to NewRequestWithContext so it sets ContentLength and GetBody.
+	// Building the request with a nil body makes Go fall back to chunked transfer
+	// encoding with no Content-Length, which some receivers (notably PHP reading
+	// php://input behind nginx/FPM) deliver to the application as an empty body.
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(postBody))
+	if err != nil {
+		return pkgError.WebhookError(fmt.Sprintf("error when create http object %v", err))
+	}
+
+	secretKey := []byte(webhookSecret)
+	signature, err := utils.GetMessageDigestOrSignature(postBody, secretKey)
+	if err != nil {
+		return pkgError.WebhookError(fmt.Sprintf("error when create signature %v", err))
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hub-Signature-256", fmt.Sprintf("sha256=%s", signature))
+
+	var attempt int
+	var maxAttempts = 5
+	var sleepDuration = 1 * time.Second
+
+	for attempt = 0; attempt < maxAttempts; attempt++ {
+		// Rewind the body for each attempt. GetBody returns a fresh reader while
+		// leaving ContentLength intact, unlike assigning req.Body directly.
+		body, err := req.GetBody()
+		if err != nil {
+			return pkgError.WebhookError(fmt.Sprintf("error when rewind body %v", err))
+		}
+		req.Body = body
+
+		resp, err := client.Do(req)
+		if err == nil {
+			defer resp.Body.Close()
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				logrus.Infof("Successfully submitted webhook on attempt %d", attempt+1)
+				return nil
+			}
+			err = fmt.Errorf("webhook returned status %d", resp.StatusCode)
+		}
+		logrus.Warnf("Attempt %d to submit webhook failed: %v", attempt+1, err)
+		if attempt < maxAttempts-1 {
+			// Wait on the caller's context, not the wall clock. A plain Sleep here
+			// spends the full 1+2+4+8s of backoff even once the deadline has passed,
+			// so a single unreachable endpoint could overrun the caller's budget and
+			// starve whatever the caller still had to do.
+			select {
+			case <-ctx.Done():
+				return pkgError.WebhookError(fmt.Sprintf("error when submit webhook after %d attempts: %v", attempt+1, ctx.Err()))
+			case <-time.After(sleepDuration):
+			}
+			sleepDuration *= 2
+		}
+	}
+
+	return pkgError.WebhookError(fmt.Sprintf("error when submit webhook after %d attempts: %v", attempt, err))
+}
+
+// effectiveWebhookInsecureSkipVerify chooses the TLS bypass for one delivery.
+//
+// DeviceWebhookConfig.WebhookInsecureSkipVerify is a bool, so it cannot
+// represent "unset". Callers pass a nil config when the device did not
+// override webhook delivery (global URLs, or no stored device webhook). The
+// process-wide WHATSAPP_WEBHOOK_INSECURE_SKIP_VERIFY value applies only in
+// that case. A non-nil config carries the stored device flag: false means
+// verify certificates and wins over a global bypass.
+func effectiveWebhookInsecureSkipVerify(webhookConfig *chatstorage.DeviceWebhookConfig) bool {
+	if webhookConfig != nil {
+		return webhookConfig.WebhookInsecureSkipVerify
+	}
+	return config.WhatsappWebhookInsecureSkipVerify
+}
+
+func webhookTLSConfig(webhookConfig *chatstorage.DeviceWebhookConfig) *tls.Config {
+	return &tls.Config{
+		InsecureSkipVerify: effectiveWebhookInsecureSkipVerify(webhookConfig),
+	}
+}
+
+func newWebhookHTTPClient(webhookConfig *chatstorage.DeviceWebhookConfig) *http.Client {
+	return &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: webhookTLSConfig(webhookConfig),
+		},
+	}
+}
