@@ -1,37 +1,88 @@
 <!-- markdownlint-disable MD041 -->
-<!-- markdownlint-disable-next-line MD033 -->
 <div align="center">
-  <!-- markdownlint-disable-next-line MD033 -->
-  <img src="gallery/gowa.svg" alt="GoWA Logo" width="200" height="200">
+  <img src="gallery/gowa.svg" alt="GoWA Logo" width="180" height="180">
 
-## Go WhatsApp — Built for Efficient Memory Use
+  <h2>GOWA — Go WhatsApp Multi-Device REST &amp; Webhook Engine</h2>
 
+  <p>
+    <strong>High-Throughput, Memory-Efficient WhatsApp REST Engine for Followix &amp; Enterprise Messaging</strong><br />
+    Engineered in <strong>Go</strong> for ultra-low latency, sliding-window concurrency, and automated multi-tenant session persistence.
+  </p>
+
+  <p>
+    <img src="https://img.shields.io/badge/Language-Go%201.23+-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go" />
+    <img src="https://img.shields.io/badge/Runtime-Docker%20%2F%20Swarm-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
+    <img src="https://img.shields.io/badge/Storage-SQLite%20%7C%20Postgres-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL" />
+    <img src="https://img.shields.io/badge/Protocol-WhatsApp%20Multi--Device-25D366?style=flat-square&logo=whatsapp&logoColor=white" alt="WhatsApp" />
+    <img src="https://img.shields.io/badge/License-MIT-green.svg?style=flat-square" alt="MIT" />
+  </p>
 </div>
-
-[![GitHub Sponsors](https://img.shields.io/badge/Sponsor-on%20GitHub-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/aldinokemal)
-[![Greptile: The War on Bugs](https://www.greptile.com/badge.svg)](https://www.greptile.com/?utm_source=oss_badge&utm_medium=readme&utm_campaign=greptile_for_open_source)
-
-## Support GOWA
-
-**Does GOWA save you development time or power your business? Help sustain the project through GitHub Sponsors.**
-
-Sponsorship helps make time for:
-
-- Investigating bugs and keeping up with WhatsApp and whatsmeow changes.
-- Improving regression tests, documentation, and integration examples.
-- Reviewing contributions and preparing releases.
-
-Monthly sponsorship helps make ongoing maintenance more sustainable. Individuals and teams are welcome.
-
-**[Sponsor GOWA on GitHub →](https://github.com/sponsors/aldinokemal)**
-
-Not ready to sponsor? Reproducible bug reports, documentation improvements, and sharing GOWA also help.
 
 ---
 
-![release version](https://img.shields.io/github/v/release/aldinokemal/go-whatsapp-web-multidevice)
-![Build Image](https://github.com/aldinokemal/go-whatsapp-web-multidevice/actions/workflows/build-docker-image.yaml/badge.svg)
-![Binary Release](https://github.com/aldinokemal/go-whatsapp-web-multidevice/actions/workflows/release.yml/badge.svg)
+### 🏛️ System Architecture
+
+```mermaid
+flowchart LR
+    subgraph Client["Client Applications"]
+        CRM[Multi-Tenant CRM / Followix]
+        Automation[n8n / Webhook Receivers]
+        Devs[REST / OpenAPI Consumers]
+    end
+
+    subgraph Core["GOWA Engine Core (Go Runtime)"]
+        REST[REST API Server / Router]
+        SessionMgr[Multi-Session Controller]
+        Dispatcher[Outbound Webhook Dispatcher]
+        WhatsMeow[whatsmeow Protocol Client]
+    end
+
+    subgraph Storage["Persistence Layer"]
+        DB[(Session & Device Store: SQLite / Postgres)]
+        Media[(Local / S3 Media Store)]
+    end
+
+    subgraph WhatsApp["WhatsApp Network"]
+        WACloud((WhatsApp Multi-Device Servers))
+    end
+
+    CRM & Automation & Devs -->|HTTP REST / JSON| REST
+    REST --> SessionMgr
+    SessionMgr --> DB
+    SessionMgr --> WhatsMeow
+    WhatsMeow -->|E2EE Noise Protocol| WACloud
+    WACloud -->|Inbound Events| WhatsMeow
+    WhatsMeow --> Dispatcher
+    Dispatcher -->|Signed HMAC Webhooks| Automation & CRM
+    WhatsMeow --> Media
+
+    style Client fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#fff
+    style Core fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
+    style Storage fill:#0f172a,stroke:#f59e0b,stroke-width:2px,color:#fff
+    style WhatsApp fill:#0f172a,stroke:#22c55e,stroke-width:2px,color:#fff
+```
+
+---
+
+### ⚡ Quick Start with Docker Compose
+
+```bash
+# Clone the repository
+git clone https://github.com/seotarek/gowa.git
+cd gowa
+
+# Copy environment template
+cp src/.env.example src/.env
+
+# Build and start container
+docker compose up -d
+
+# Check service health
+curl http://localhost:3000/app/info
+```
+
+---
+
 
 ## ARM, AMD64, and MCP Support
 
